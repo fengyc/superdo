@@ -39,6 +39,7 @@ jobs:
         with:
           command: build
           args: --release
+      # Debug
       - run: tree
       - run: mv target/release/superdo superdo-windows
 
