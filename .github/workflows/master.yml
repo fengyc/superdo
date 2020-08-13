@@ -38,7 +38,6 @@ jobs:
         with:
           command: build
           args: --release
-      - run: tree
       - run: mv target/release/superdo.exe superdo-windows.exe
 
       # Upload artifact
@@ -88,6 +87,7 @@ jobs:
       - uses: "marvinpinto/action-automatic-releases@latest"
         with:
           repo_token: "${{ secrets.GITHUB_TOKEN }}"
+          automatic_release_tag: "latest"
           title: "Development Build"
           prerelease: true
           draft: false
