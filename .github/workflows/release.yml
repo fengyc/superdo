@@ -46,7 +46,7 @@ jobs:
         uses: actions/upload-artifact@v1
         with:
           name: superdo-windows
-          path: superdo-windows
+          path: superdo-windows.exe
 
   build-macos:
     runs-on: macos-latest
