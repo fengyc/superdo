@@ -11,9 +11,8 @@ jobs:
       # Checkout
       - name: Checkout
         uses: actions/checkout@v2
-      - name: Fix cargo config
-        run: sed -e "s/.*replace-with.*//g" -i .cargo/config
 
+      # Build
       - uses: actions-rs/cargo@v1
         with:
           command: build
