@@ -6,7 +6,7 @@ on:
       - "v*"
 
 jobs:
-  build-all:
+  build-ubuntu:
     runs-on: ubuntu-latest
     steps:
       # Checkout
@@ -18,13 +18,71 @@ jobs:
         with:
           command: build
           args: --release
+      - run: mv target/release/superdo superdo-ubuntu
 
       # Upload artifact
       - name: Upload artifacts
         uses: actions/upload-artifact@v1
         with:
-          name: superdo
-          path: target/release/superdo
+          name: superdo-ubuntu
+          path: superdo-ubuntu
+
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      # Checkout
+      - name: Checkout
+        uses: actions/checkout@v2
+
+      # Build
+      - uses: actions-rs/cargo@v1
+        with:
+          command: build
+          args: --release
+      - run: mv target/release/superdo superdo-windows
+
+      # Upload artifact
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v1
+        with:
+          name: superdo-windows
+          path: superdo-windows
+
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      # Checkout
+      - name: Checkout
+        uses: actions/checkout@v2
+
+      # Build
+      - uses: actions-rs/cargo@v1
+        with:
+          command: build
+          args: --release
+      - run: mv target/release/superdo superdo-macos
+
+      # Upload artifact
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v1
+        with:
+          name: superdo-macos
+          path: superdo-macos
+
+  release:
+    needs: [build-ubuntu, build-macos, build-windows]
+    runs-on: ubuntu-latest
+    steps:
+      # Download artifact
+      - uses: actions/download-artifact@v2
+        with:
+          name: superdo-ubuntu
+      - uses: actions/download-artifact@v2
+        with:
+          name: superdo-windows
+      - uses: actions/download-artifact@v2
+        with:
+          name: superdo-macos
 
       # Development Release
       - uses: "marvinpinto/action-automatic-releases@latest"
@@ -34,4 +92,4 @@ jobs:
           prerelease: false
           draft: true
           files: |
-            target/release/superdo
+            superdo-*
