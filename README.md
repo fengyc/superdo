@@ -1,6 +1,6 @@
 # SuperDo
 
-A sukudo resolver written in Rust language.
+A sukudo game solver written in Rust language.
 
 ## Download and run
 
