@@ -326,6 +326,8 @@ mod tests {
 
     #[test]
     fn test_sodoku_2() {
+        env_logger::init();
+
         let board = [
             [0, 4, 6, 9, 0, 3, 0, 0, 0],
             [0, 0, 3, 0, 5, 0, 0, 6, 0],
