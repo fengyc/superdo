@@ -3,9 +3,13 @@ use std::collections::HashSet;
 use std::fmt;
 use std::io;
 
+/// 数独位置
 #[derive(Debug, Default, Clone)]
 struct SudokuPos {
+    /// 当前值，非 0 表示已有确定数字
     val: u32,
+
+    /// 候选数字
     digits: HashSet<u32>,
 }
 
@@ -16,6 +20,7 @@ impl PartialEq<u32> for SudokuPos {
 }
 
 impl SudokuPos {
+    /// 创建一个新的位置，数值非 0 时为已有确定数字
     pub fn new_with(val: u32) -> Self {
         let nums = if val == 0 {
             (1..10).collect()
@@ -26,12 +31,14 @@ impl SudokuPos {
     }
 }
 
+/// 数独棋盘， 9*9
 #[derive(Debug, Clone)]
 struct SudokuBoard {
     board: Vec<Vec<SudokuPos>>,
 }
 
 impl SudokuBoard {
+    /// 创建一个空白的数独棋盘
     pub fn empty() -> Self {
         let mut line = vec![];
         for _ in 0..9 {
@@ -45,6 +52,7 @@ impl SudokuBoard {
         Self { board }
     }
 
+    /// 创建一个已初始化的数独棋盘
     pub fn new_with(board: &[[u32; 9]; 9]) -> Self {
         let mut b = Self::empty();
         for row in 0..9 {
@@ -55,6 +63,7 @@ impl SudokuBoard {
         b
     }
 
+    /// 设置某个位置的数值
     pub fn set(&mut self, val: u32, row: usize, col: usize) {
         self.get_mut(row, col).val = val;
         if val != 0 {
@@ -79,14 +88,17 @@ impl SudokuBoard {
         }
     }
 
+    /// 获取某个位置
     pub fn get(&self, row: usize, col: usize) -> &SudokuPos {
         &self.board[row][col]
     }
 
+    /// 获取某个位置，可变形式
     pub fn get_mut(&mut self, row: usize, col: usize) -> &mut SudokuPos {
         &mut self.board[row][col]
     }
 
+    /// 进行数独求解
     pub fn solve(&mut self) -> bool {
         loop {
             let mut has_empty = false;
