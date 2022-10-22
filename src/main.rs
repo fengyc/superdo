@@ -7,19 +7,17 @@ use std::sync::Arc;
 
 use clap::Parser;
 use env_logger::Env;
-use num_cpus;
 
 #[cfg(windows)]
 const EOL: &'static str = "\r\n";
 #[cfg(not(windows))]
-const EOL: &'static str = "\n";
+const EOL: &str = "\n";
 
 /// 数独位置
 #[derive(Debug, Default, Clone)]
 struct SudokuPos {
     /// 当前值，非 0 表示已有确定数字
     val: u32,
-
     /// 候选数字
     digits: HashSet<u32>,
 }
@@ -133,7 +131,7 @@ impl SudokuBoard {
                         has_empty = true;
 
                         // 失败
-                        if self.board[row][col].digits.len() == 0 {
+                        if self.board[row][col].digits.is_empty() {
                             return false;
                         }
 
@@ -151,7 +149,7 @@ impl SudokuBoard {
                         // 检查是否只有当前位置才能使用的数字
                         let mut counts = HashMap::new();
                         for n in self.get(row, col).digits.iter() {
-                            counts.insert(n.clone(), 1);
+                            counts.insert(*n, 1);
                         }
                         let counts_cloned = counts.clone();
                         // 辅助函数
@@ -262,7 +260,7 @@ impl PartialEq<[[u32; 9]; 9]> for SudokuBoard {
                 }
             }
         }
-        return true;
+        true
     }
 }
 
@@ -286,41 +284,39 @@ fn resolve(ctx: Arc<ResolveCtx>, board: SudokuBoard, q: Vec<(usize, usize, u32)>
     if solved {
         ctx.total.fetch_add(1, Ordering::Relaxed);
         println!("q: {:?}\n{}\n{}", q, ctx.sep, board);
-    } else {
-        if !board.exhausted() {
-            // 固定某个自由参数
-            let (free_row, free_col, _) = q.last().cloned().unwrap_or((0, 0, 0));
-            let free_pos = free_row * 9 + free_col;
-            let mut found_free = false;
-            for row in free_row..9 {
-                for col in 0..9 {
-                    let cur_pos = row * 9 + col;
-                    if cur_pos < free_pos {
-                        continue;
-                    }
-                    let pos = board.get(row, col);
-                    if pos.val == 0 {
-                        // 找到一个自由参数
-                        found_free = true;
-                        log::debug!("free pos: ({},{})={} {:?}", row, col, pos.val, pos.digits);
-                        for digit in pos.digits.clone() {
-                            let mut board2 = board.clone();
-                            board2.set(digit, row, col);
-                            let ctx_cloned = ctx.clone();
-                            let mut q2 = q.clone();
-                            q2.push((row, col, digit));
-                            rayon::spawn(move || {
-                                resolve(ctx_cloned.clone(), board2, q2);
-                            });
-                        }
-                    }
-                    if found_free {
-                        break;
+    } else if !board.exhausted() {
+        // 固定某个自由参数
+        let (free_row, free_col, _) = q.last().cloned().unwrap_or((0, 0, 0));
+        let free_pos = free_row * 9 + free_col;
+        let mut found_free = false;
+        for row in free_row..9 {
+            for col in 0..9 {
+                let cur_pos = row * 9 + col;
+                if cur_pos < free_pos {
+                    continue;
+                }
+                let pos = board.get(row, col);
+                if pos.val == 0 {
+                    // 找到一个自由参数
+                    found_free = true;
+                    log::debug!("free pos: ({},{})={} {:?}", row, col, pos.val, pos.digits);
+                    for digit in pos.digits.clone() {
+                        let mut board2 = board.clone();
+                        board2.set(digit, row, col);
+                        let ctx_cloned = ctx.clone();
+                        let mut q2 = q.clone();
+                        q2.push((row, col, digit));
+                        rayon::spawn(move || {
+                            resolve(ctx_cloned.clone(), board2, q2);
+                        });
                     }
                 }
                 if found_free {
                     break;
                 }
+            }
+            if found_free {
+                break;
             }
         }
     }
@@ -380,7 +376,7 @@ fn main() {
     let mut board = [[0; 9]; 9];
     let mut count = 0;
     for line in io::stdin().lines() {
-        for c in line.unwrap().chars().filter(|c| c.is_digit(10)) {
+        for c in line.unwrap().chars().filter(|c| c.is_ascii_digit()) {
             // 读取
             board[count / 9][count % 9] = c.to_digit(10).unwrap();
             count += 1;
@@ -394,7 +390,7 @@ fn main() {
                 let board = SudokuBoard::new_with(&board);
                 let _ = thread_pool.install(|| resolve(ctx, board, vec![]));
                 count = 0;
-                println!("");
+                println!();
                 break;
             }
         }
