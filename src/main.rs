@@ -122,8 +122,8 @@ impl SudokuBoard {
     /// 进行数独求解
     pub fn solve(&mut self) -> bool {
         loop {
-            let mut has_empty = false;
-            let mut has_solution = false;
+            let mut has_empty = false; // 是否还有空白的位置
+            let mut has_changes = false; // 本次求解是否产生变化
 
             for row in 0..9 {
                 for col in 0..9 {
@@ -140,22 +140,23 @@ impl SudokuBoard {
                         if pos.val == 0 && pos.digits.len() == 1 {
                             let val = *pos.digits.iter().next().unwrap();
                             self.set(val, row, col);
-                            has_solution = true;
+                            has_changes = true;
                             continue;
                         }
 
+                        // 记录下日志，当前位置剩下的可用数字
                         log::debug!("({},{}) digits: {:?}", row, col, pos.digits);
 
-                        // 检查是否只有当前位置才能使用的数字
-                        let mut counts = HashMap::new();
+                        // 检查是否只有当前位置才能使用的数字，进行数字统计
+                        let mut digit_stats = HashMap::new();
                         for n in self.get(row, col).digits.iter() {
-                            counts.insert(*n, 1);
+                            digit_stats.insert(*n, 1);
                         }
-                        let counts_cloned = counts.clone();
-                        // 辅助函数
+                        let digit_stats_cloned = digit_stats.clone();
+                        // 辅助函数，如果只有计数为 1 中进行一次更新
                         let count_and_set =
-                            |board: &mut SudokuBoard, counts: HashMap<u32, u32>| -> bool {
-                                counts.iter().any(|(k, v)| {
+                            |board: &mut SudokuBoard, stats: HashMap<u32, u32>| -> bool {
+                                stats.iter().any(|(k, v)| {
                                     if *v == 1 {
                                         log::debug!("({},{}) solved: {}", row, col, k);
                                         board.set(*k, row, col);
@@ -165,42 +166,42 @@ impl SudokuBoard {
                                 })
                             };
 
-                        // 当前行是否有唯一只能被当前使用的数字
-                        let mut counts = counts_cloned.clone();
+                        // 当前行统计，是否有唯一只能被当前使用的数字
+                        let mut row_digit_stats = digit_stats_cloned.clone();
                         for i in 0..9 {
                             if i != col {
                                 let pos = self.get(row, i);
                                 for n in pos.digits.iter() {
-                                    if let Some(count) = counts.get_mut(n) {
+                                    if let Some(count) = row_digit_stats.get_mut(n) {
                                         *count += 1;
                                     }
                                 }
                             }
                         }
-                        if count_and_set(self, counts) {
-                            has_solution = true;
+                        if count_and_set(self, row_digit_stats) {
+                            has_changes = true;
                             continue;
                         }
 
-                        // 当前列上是否有唯一只能被当前使用的数字
-                        let mut counts = counts_cloned.clone();
+                        // 当前列统计，是否有唯一只能被当前使用的数字
+                        let mut col_digit_stats = digit_stats_cloned.clone();
                         for i in 0..9 {
                             if i != row {
                                 let pos = self.get(i, col);
                                 for n in pos.digits.iter() {
-                                    if let Some(count) = counts.get_mut(n) {
+                                    if let Some(count) = col_digit_stats.get_mut(n) {
                                         *count += 1;
                                     }
                                 }
                             }
                         }
-                        if count_and_set(self, counts) {
-                            has_solution = true;
+                        if count_and_set(self, col_digit_stats) {
+                            has_changes = true;
                             continue;
                         }
 
-                        // 3x3 小格中，剩下数字中，是否有唯一只能被当前位置使用的数字
-                        let mut counts = counts_cloned.clone();
+                        // 3x3 小格统计，剩下数字中，是否有唯一只能被当前位置使用的数字
+                        let mut grid_digit_stats = digit_stats_cloned.clone();
                         let row_s = (row / 3) * 3;
                         let col_s = (col / 3) * 3;
                         for a in 0..3 {
@@ -208,26 +209,27 @@ impl SudokuBoard {
                                 let pos = self.get(row_s + a, col_s + b);
                                 if (row_s + a != row || col_s + b != col) && pos.val == 0 {
                                     for n in pos.digits.iter() {
-                                        if let Some(count) = counts.get_mut(n) {
+                                        if let Some(count) = grid_digit_stats.get_mut(n) {
                                             *count += 1;
                                         }
                                     }
                                 }
                             }
                         }
-                        if count_and_set(self, counts) {
-                            has_solution = true;
+                        if count_and_set(self, grid_digit_stats) {
+                            has_changes = true;
                             continue;
                         }
                     }
                 }
             }
 
-            // 已填满，或无解决方案
+            // 已填满
             if !has_empty {
                 return true;
             }
-            if !has_solution {
+            // 未填满，但是本次运行未有找到合适的方案
+            if !has_changes {
                 return false;
             }
         }
@@ -283,7 +285,8 @@ fn resolve(ctx: Arc<ResolveCtx>, board: SudokuBoard, q: Vec<(usize, usize, u32)>
     let solved = board.solve();
     if solved {
         ctx.total.fetch_add(1, Ordering::Relaxed);
-        println!("q: {:?}\n{}\n{}", q, ctx.sep, board);
+        log::debug!("q: {:?}", q);
+        println!("{}\n{}", ctx.sep, board);
     } else if !board.exhausted() {
         // 固定某个自由参数
         let (free_row, free_col, _) = q.last().cloned().unwrap_or((0, 0, 0));
@@ -320,6 +323,115 @@ fn resolve(ctx: Arc<ResolveCtx>, board: SudokuBoard, q: Vec<(usize, usize, u32)>
             }
         }
     }
+}
+
+/// 回溯法找一个解
+fn brute_force(board: &mut [[u32; 9]; 9], empty: &[[bool; 9]; 9], stack: &mut Vec<(usize, usize)>) -> bool {
+    // 无法回溯或缺少初始值
+    if stack.is_empty() {
+        return false;
+    }
+    
+    let (mut row,mut col) = stack.pop().unwrap(); // 当前行列
+
+    // 为 (row,col) 查找下一个能用的值
+    let next_digit = |board: &[[u32; 9]; 9], row: usize, col: usize| -> Option<u32> {
+        // 注意，使用 +1 来越过旧值
+        'next_digit: for digit in (board[row][col] + 1)..10 {
+            // 同一行唯一
+            for i in 0..9 {
+                if board[row][i] == digit {
+                    continue 'next_digit;
+                }
+            }
+            // 同一列唯一
+            for i in 0..9 {
+                if board[i][col] == digit {
+                    continue 'next_digit;
+                }
+            }
+            // 3x3 小格唯一
+            let row_grid = (row / 3) * 3;
+            let col_grid = (col / 3) * 3;
+            for row_x in 0..3 {
+                for col_x in 0..3 {
+                    if board[row_grid + row_x][col_grid + col_x] == digit {
+                        continue 'next_digit;
+                    }
+                }
+            }
+            return Some(digit);
+        }
+        None
+    };
+
+    'back_trace: while row < 9 {
+        while col < 9 {
+            // 空位处理
+            if board[row][col] == 0 || empty[row][col] {
+                match next_digit(board, row, col) {
+                    Some(digit) => {
+                        // 找到可能值，压栈
+                        board[row][col] = digit;
+                        stack.push((row, col));
+                    }
+                    None => {
+                        // 当前复位，向前回溯
+                        board[row][col] = 0;
+                        match stack.pop() {
+                            Some((prev_row, prev_col)) => {
+                                row = prev_row;
+                                col = prev_col;
+                                continue 'back_trace;
+                            }
+                            None => {
+                                // 已不能回溯，失败
+                                return false;
+                            }
+                        }
+                    }
+                }
+            }
+            // 成功找到结果，打印出来，然后向前回溯
+            if row == 8 && col == 8 && board[row][col] != 0 {
+                return true;
+            }
+            col += 1;
+        }
+        row += 1;
+        col = 0;
+    }
+    false
+}
+
+fn resolve_2(board: &mut [[u32; 9]; 9]) {
+    // 空位
+    let mut empty = [[false; 9]; 9];
+    for i in 0..9 {
+        for j in 0..9 {
+            empty[i][j] = board[i][j] == 0;
+        }
+    }
+    // 回溯栈
+    let mut stack = Vec::with_capacity(81);
+    stack.push((0, 0));
+
+    // 打印
+    let dump_board = |board: &[[u32; 9]; 9]| -> String {
+        board
+            .map(|row| row.map(|d| d.to_string()).join(""))
+            .join(EOL)
+    };
+
+    loop {
+        let resolve = brute_force(board, &empty, &mut stack);
+        if resolve {
+            println!("---------\n{}", dump_board(board));
+        } else {
+            break;
+        }
+    }
+    println!();
 }
 
 #[derive(Parser, Debug)]
@@ -399,6 +511,8 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
+    use crate::brute_force;
+
     use super::SudokuBoard;
 
     #[ctor::ctor]
@@ -491,5 +605,46 @@ mod tests {
         ];
         assert!(board2 == result);
         println!("{}", board2);
+    }
+
+    #[test]
+    fn test_sudoku_3() {
+        let mut board = [
+            [0, 4, 0, 6, 1, 0, 9, 2, 5],
+            [0, 5, 1, 0, 0, 0, 7, 4, 6],
+            [9, 2, 6, 0, 0, 0, 8, 1, 3],
+            [0, 8, 0, 0, 5, 0, 0, 7, 1],
+            [0, 9, 0, 1, 0, 0, 0, 3, 2],
+            [0, 1, 3, 4, 7, 0, 5, 9, 8],
+            [0, 0, 0, 0, 0, 0, 1, 8, 9],
+            [1, 6, 2, 8, 0, 0, 3, 5, 7],
+            [8, 0, 9, 0, 0, 1, 2, 6, 4],
+        ];
+        let mut empty = [[false; 9]; 9];
+        for i in 0..9 {
+            for j in 0..9 {
+                empty[i][j] = board[i][j] == 0;
+            }
+        }
+        let mut stack = Vec::with_capacity(81);
+        stack.push((0, 0));
+        let resolved = brute_force(&mut board, &empty, &mut stack);
+        assert!(resolved);
+
+        let board2 = [
+            [7_u32, 4, 8, 6, 1, 3, 9, 2, 5],
+            [3, 5, 1, 9, 2, 8, 7, 4, 6],
+            [9, 2, 6, 7, 4, 5, 8, 1, 3],
+            [2, 8, 4, 3, 5, 9, 6, 7, 1],
+            [5, 9, 7, 1, 8, 6, 4, 3, 2],
+            [6, 1, 3, 4, 7, 2, 5, 9, 8],
+            [4, 3, 5, 2, 6, 7, 1, 8, 9],
+            [1, 6, 2, 8, 9, 4, 3, 5, 7],
+            [8, 7, 9, 5, 3, 1, 2, 6, 4],
+        ];
+        assert_eq!(board, board2);
+
+        let resolved = brute_force(&mut board, &empty, &mut stack);
+        assert!(!resolved);
     }
 }

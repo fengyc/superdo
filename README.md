@@ -37,6 +37,7 @@ Or
         613472598
         435267189
         162894357
+        879531264
 
 2. sudoku with multiple solutions
 
