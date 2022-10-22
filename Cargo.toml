@@ -2,10 +2,21 @@
 name = "superdo"
 version = "0.2.0"
 authors = ["fengyingcai <fengyc.work@gmail.com>"]
-edition = "2018"
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+edition = "2021"
+description = "A sudoku puzzle solver."
+homepage = "https://github.com/fengyc/superdo"
+repository = "https://github.com/fengyc/superdo"
+readme = "README.md"
+keywords = ["sudoku", "game"]
+categories = ["games", "command-line-utilities"]
+license = "MIT"
 
 [dependencies]
 log = "0.4"
-env_logger = "0.7"
+env_logger = "0.9"
+clap = { version = "4.0", features = ["derive"] }
+num_cpus = "1.13"
+rayon = "1.5"
+
+[dev-dependencies]
+ctor = "0.1"

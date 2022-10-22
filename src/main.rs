@@ -2,6 +2,17 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 use std::fmt;
 use std::io;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
+
+use clap::Parser;
+use env_logger::Env;
+use num_cpus;
+
+#[cfg(windows)]
+const EOL: &'static str = "\r\n";
+#[cfg(not(windows))]
+const EOL: &'static str = "\n";
 
 /// 数独位置
 #[derive(Debug, Default, Clone)]
@@ -22,12 +33,12 @@ impl PartialEq<u32> for SudokuPos {
 impl SudokuPos {
     /// 创建一个新的位置，数值非 0 时为已有确定数字
     pub fn new_with(val: u32) -> Self {
-        let nums = if val == 0 {
+        let digits = if val == 0 {
             (1..10).collect()
         } else {
             HashSet::default()
         };
-        Self { val, digits: nums }
+        Self { val, digits }
     }
 }
 
@@ -98,6 +109,18 @@ impl SudokuBoard {
         &mut self.board[row][col]
     }
 
+    /// 是否有自由位置耗尽，此时无解
+    pub fn exhausted(&self) -> bool {
+        for row in &self.board {
+            for col in row {
+                if col.val == 0 && col.digits.is_empty() {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
     /// 进行数独求解
     pub fn solve(&mut self) -> bool {
         loop {
@@ -117,13 +140,13 @@ impl SudokuBoard {
                         // 已经只剩下一个数字
                         let pos = self.get_mut(row, col);
                         if pos.val == 0 && pos.digits.len() == 1 {
-                            let val = pos.digits.iter().next().unwrap().clone();
+                            let val = *pos.digits.iter().next().unwrap();
                             self.set(val, row, col);
                             has_solution = true;
                             continue;
                         }
 
-                        log::debug!("({}, {}) nums: {:?}", row, col, pos.digits);
+                        log::debug!("({},{}) digits: {:?}", row, col, pos.digits);
 
                         // 检查是否只有当前位置才能使用的数字
                         let mut counts = HashMap::new();
@@ -136,7 +159,7 @@ impl SudokuBoard {
                             |board: &mut SudokuBoard, counts: HashMap<u32, u32>| -> bool {
                                 counts.iter().any(|(k, v)| {
                                     if *v == 1 {
-                                        log::debug!("({}, {}) solved: {}", row, col, k);
+                                        log::debug!("({},{}) solved: {}", row, col, k);
                                         board.set(*k, row, col);
                                         return true;
                                     }
@@ -215,17 +238,18 @@ impl SudokuBoard {
 
 impl fmt::Display for SudokuBoard {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        for row in 0..9 {
-            for col in 0..9 {
-                write!(f, "{}", self.board[row][col].val)?;
-                if self.board[row][col].val == 0 {
-                    write!(f, "{:?}", self.board[row][col].digits)?;
-                }
-                write!(f, " ")?;
-            }
-            write!(f, "\n")?;
-        }
-        Ok(())
+        let s = self
+            .board
+            .iter()
+            .map(|row| {
+                row.iter()
+                    .map(|p| format!("{}", p.val))
+                    .collect::<Vec<String>>()
+                    .join("")
+            })
+            .collect::<Vec<String>>()
+            .join(EOL);
+        write!(f, "{}", s)
     }
 }
 
@@ -242,57 +266,138 @@ impl PartialEq<[[u32; 9]; 9]> for SudokuBoard {
     }
 }
 
+/// 求解上下文
+struct ResolveCtx {
+    /// 结果分隔符
+    sep: String,
+    /// 是否求解所有结果
+    all: bool,
+    /// 结果总数
+    total: AtomicUsize,
+}
+
+/// 进行求解
+fn resolve(ctx: Arc<ResolveCtx>, board: SudokuBoard, q: Vec<(usize, usize, u32)>) {
+    if ctx.total.load(Ordering::Relaxed) > 0 && !ctx.all {
+        return;
+    }
+    let mut board = board;
+    let solved = board.solve();
+    if solved {
+        ctx.total.fetch_add(1, Ordering::Relaxed);
+        println!("q: {:?}\n{}\n{}", q, ctx.sep, board);
+    } else {
+        if !board.exhausted() {
+            // 固定某个自由参数
+            let (free_row, free_col, _) = q.last().cloned().unwrap_or((0, 0, 0));
+            let free_pos = free_row * 9 + free_col;
+            let mut found_free = false;
+            for row in free_row..9 {
+                for col in 0..9 {
+                    let cur_pos = row * 9 + col;
+                    if cur_pos < free_pos {
+                        continue;
+                    }
+                    let pos = board.get(row, col);
+                    if pos.val == 0 {
+                        // 找到一个自由参数
+                        found_free = true;
+                        log::debug!("free pos: ({},{})={} {:?}", row, col, pos.val, pos.digits);
+                        for digit in pos.digits.clone() {
+                            let mut board2 = board.clone();
+                            board2.set(digit, row, col);
+                            let ctx_cloned = ctx.clone();
+                            let mut q2 = q.clone();
+                            q2.push((row, col, digit));
+                            rayon::spawn(move || {
+                                resolve(ctx_cloned.clone(), board2, q2);
+                            });
+                        }
+                    }
+                    if found_free {
+                        break;
+                    }
+                }
+                if found_free {
+                    break;
+                }
+            }
+        }
+    }
+}
+
+#[derive(Parser, Debug)]
+#[command(
+    version,
+    about = "A sudoku puzzle solver.\n\n\
+            Input the sudoku puzzle digit by digit (left to right, top to down, \
+                0 for unknown digit, whitespace and other characters are ignored).\n\n\
+            Output is a list of solutions separated by the chosen separator, then \
+                followed by a blank line.",
+    long_about = None
+)]
+struct Args {
+    /// Show debug log
+    #[arg(short, long)]
+    debug: bool,
+
+    /// Find all solutions
+    #[arg(short, long)]
+    all: bool,
+
+    /// Solution separator
+    #[arg(long, default_value = "---------")]
+    sep: String,
+
+    /// Max number of threads
+    #[arg(long, default_value_t = num_cpus::get())]
+    threads: usize,
+}
+
 fn main() {
-    env_logger::init();
+    let args = Args::parse();
+
+    // 日志初始化
+    let log_level = if args.debug { "debug" } else { "info" };
+    env_logger::init_from_env(Env::default().default_filter_or(log_level));
+
+    // 线程池
+    let num_threads = if args.threads > 0 {
+        args.threads
+    } else {
+        num_cpus::get()
+    };
+    let thread_pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(num_threads)
+        .build()
+        .unwrap();
+
+    // 结果格式
+    let all = args.all;
+    let sep = args.sep;
 
     // 数独板
     let mut board = [[0; 9]; 9];
-
-    println!("Input sodoku board, digit by digit (left to right, top to down, 0 for unknown digit, separated with or without space)");
-    let mut total = 0;
-    while total < 81 {
-        let mut digits = String::new();
-        if let Ok(_) = io::stdin().read_line(&mut digits) {
-            for c in digits.chars() {
-                if let Some(d) = c.to_digit(10) {
-                    board[total / 9][total % 9] = d;
-                    total += 1;
-                }
+    let mut count = 0;
+    for line in io::stdin().lines() {
+        for c in line.unwrap().chars().filter(|c| c.is_digit(10)) {
+            // 读取
+            board[count / 9][count % 9] = c.to_digit(10).unwrap();
+            count += 1;
+            // 进行求解
+            if count == 81 {
+                let ctx = Arc::new(ResolveCtx {
+                    sep: sep.clone(),
+                    all,
+                    total: AtomicUsize::new(0),
+                });
+                let board = SudokuBoard::new_with(&board);
+                let _ = thread_pool.install(|| resolve(ctx, board, vec![]));
+                count = 0;
+                println!("");
+                break;
             }
         }
-    }
-
-    // 第一次计算
-    let mut board = SudokuBoard::new_with(&board);
-    let mut solved = board.solve();
-    if solved {
-        println!("\nSolved: {}", solved);
-        println!("{}", board);
-    }
-
-    // 如果未解决，试数，假设只有单个自由数
-    // TODO(fengyc) 支持更加多的自由数
-    for row in 0..9 {
-        for col in 0..9 {
-            let pos = board.get(row, col);
-            if pos.val == 0 {
-                for n in &pos.digits {
-                    let mut board2 = board.clone();
-                    board2.set(*n, row, col);
-                    let solved2 = board2.solve();
-                    if solved2 {
-                        solved = solved2;
-                        println!("Solved");
-                        println!("{}", board2);
-                    }
-                }
-            }
-        }
-    }
-
-    // 打印最终状态
-    if solved {
-        println!("Final solved: {}", solved);
     }
 }
 
@@ -300,10 +405,13 @@ fn main() {
 mod tests {
     use super::SudokuBoard;
 
-    #[test]
-    fn test_sodoku_1() {
+    #[ctor::ctor]
+    fn init() {
         env_logger::init();
+    }
 
+    #[test]
+    fn test_sudoku_1() {
         let board = [
             [0, 4, 0, 6, 1, 0, 9, 2, 5],
             [0, 5, 1, 0, 0, 0, 7, 4, 6],
@@ -337,9 +445,7 @@ mod tests {
     }
 
     #[test]
-    fn test_sodoku_2() {
-        env_logger::init();
-
+    fn test_sudoku_2() {
         let board = [
             [0, 4, 6, 9, 0, 3, 0, 0, 0],
             [0, 0, 3, 0, 5, 0, 0, 6, 0],
